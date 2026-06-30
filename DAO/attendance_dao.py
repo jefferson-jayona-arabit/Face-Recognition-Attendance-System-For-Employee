@@ -12,7 +12,8 @@ class AttendanceDAO:
         try:
             cursor = conn.cursor(dictionary=True)
             cursor.execute(
-                "SELECT id, employee_id, date, time_in, time_out, status, created_at FROM attendance WHERE employee_id = %s AND date = %s",
+                "SELECT id, employee_id, date, time_in, time_out, status, created_at "
+                "FROM attendance WHERE employee_id = %s AND date = %s",
                 (employee_id, attendance_date),
             )
             row = cursor.fetchone()
@@ -24,7 +25,51 @@ class AttendanceDAO:
             conn.close()
 
     @staticmethod
-    def save_attendance(employee_id: int, attendance_date: str, check_in_time: str, status: str) -> bool:
+    def has_timed_out(employee_id: int, attendance_date: str) -> bool:
+        """Return True if a time_out has already been recorded today."""
+        conn = get_connection()
+        if not conn:
+            return False
+        try:
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute(
+                "SELECT time_out FROM attendance "
+                "WHERE employee_id = %s AND date = %s AND time_out IS NOT NULL",
+                (employee_id, attendance_date),
+            )
+            return cursor.fetchone() is not None
+        except Exception as exc:
+            print(f"[AttendanceDAO] has_timed_out: {exc}")
+            return False
+        finally:
+            conn.close()
+
+    @staticmethod
+    def record_time_out(employee_id: int, attendance_date: str, time_out: str) -> bool:
+        """Write time_out on the existing attendance row for today."""
+        conn = get_connection()
+        if not conn:
+            return False
+        try:
+            cursor = conn.cursor()
+            # Only update if a time_in row exists and time_out is still NULL
+            cursor.execute(
+                "UPDATE attendance SET time_out = %s "
+                "WHERE employee_id = %s AND date = %s AND time_out IS NULL",
+                (time_out, employee_id, attendance_date),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception as exc:
+            print(f"[AttendanceDAO] record_time_out: {exc}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    @staticmethod
+    def save_attendance(employee_id: int, attendance_date: str,
+                        check_in_time: str, status: str) -> bool:
         conn = get_connection()
         if not conn:
             return False
@@ -33,12 +78,14 @@ class AttendanceDAO:
             cursor = conn.cursor()
             if existing:
                 cursor.execute(
-                    "UPDATE attendance SET time_in = COALESCE(time_in, %s), status = %s WHERE id = %s",
+                    "UPDATE attendance SET time_in = COALESCE(time_in, %s), status = %s "
+                    "WHERE id = %s",
                     (check_in_time, status, existing.id),
                 )
             else:
                 cursor.execute(
-                    "INSERT INTO attendance (employee_id, date, time_in, status) VALUES (%s, %s, %s, %s)",
+                    "INSERT INTO attendance (employee_id, date, time_in, status) "
+                    "VALUES (%s, %s, %s, %s)",
                     (employee_id, attendance_date, check_in_time, status),
                 )
             conn.commit()
@@ -109,7 +156,15 @@ class AttendanceDAO:
             conn.close()
 
     @staticmethod
-    def get_attendance_report(start_date: Optional[str] = None, end_date: Optional[str] = None, department_id: Optional[int] = None, employee_id: Optional[int] = None) -> List[AttendanceReportRow]:
+    def get_attendance_report(
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        department_id: Optional[int] = None,
+        employee_id: Optional[int] = None,
+        name_search: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[AttendanceReportRow]:
         conn = get_connection()
         if not conn:
             return []
@@ -144,7 +199,21 @@ class AttendanceDAO:
             if employee_id:
                 query += " AND a.employee_id = %s"
                 params.append(employee_id)
+            if name_search:
+                query += (
+                    " AND (e.first_name LIKE %s OR e.last_name LIKE %s"
+                    " OR CONCAT(e.first_name,' ',e.last_name) LIKE %s"
+                    " OR e.employee_no LIKE %s)"
+                )
+                like = f"%{name_search}%"
+                params.extend([like, like, like, like])
+            if status:
+                query += " AND a.status = %s"
+                params.append(status)
             query += " ORDER BY a.date DESC, a.time_in DESC"
+            if limit:
+                query += " LIMIT %s"
+                params.append(limit)
             cursor.execute(query, params)
             return [AttendanceReportRow.from_dict(row) for row in cursor.fetchall()]
         except Exception as exc:
