@@ -1,9 +1,8 @@
 import customtkinter as ctk
+from Controller.attendance_controller import AttendanceController
 
-from services.report_service import get_dashboard_summary, get_recent_attendance
 
-
-class DashboardScreen(ctk.CTkFrame):
+class DashboardView(ctk.CTkFrame):
     def __init__(self, parent, on_go_register=None):
         super().__init__(parent, fg_color="transparent")
         self._on_go_register = on_go_register
@@ -61,27 +60,27 @@ class DashboardScreen(ctk.CTkFrame):
         self._recent_scroll.grid_columnconfigure(0, weight=1)
 
     def _refresh(self):
-        summary = get_dashboard_summary()
+        summary = AttendanceController.get_dashboard_summary()
         if summary:
-            self._summary_label.configure(text=f"Summary for {summary.get('date', 'today')}")
+            self._summary_label.configure(text=f"Summary for {summary.date}")
             values = [
-                summary.get("total_employees", 0),
-                summary.get("present_today", 0),
-                summary.get("late_today", 0),
-                summary.get("total_today", 0),
+                summary.total_employees,
+                summary.present_today,
+                summary.late_today,
+                summary.total_today,
             ]
             for label, value in zip(self._cards, values):
                 label.configure(text=str(value))
 
-        rows = get_recent_attendance(limit=8)
+        rows = AttendanceController.get_recent_attendance(limit=8)
         for widget in self._recent_scroll.winfo_children():
             widget.destroy()
         if not rows:
             ctk.CTkLabel(self._recent_scroll, text="No recent activity.", text_color="gray").grid(pady=10)
             return
         for row in rows:
-            name = f"{row.get('first_name', '')} {row.get('last_name', '')}".strip()
-            ctk.CTkLabel(self._recent_scroll, text=f"{name} • {row.get('attendance_date')} • {row.get('status', 'present')}", anchor="w").grid(sticky="ew", pady=3)
+            name = f"{row.first_name} {row.last_name}".strip()
+            ctk.CTkLabel(self._recent_scroll, text=f"{name} • {row.attendance_date} • {row.status}", anchor="w").grid(sticky="ew", pady=3)
 
     def _handle_register(self):
         if callable(self._on_go_register):

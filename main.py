@@ -1,8 +1,8 @@
 import customtkinter as ctk
-from ui.dashboard import DashboardScreen
-from ui.attendance_screen import AttendanceScreen
-from ui.enrollment_screen import EnrollmentScreen
-from ui.register_screen import RegisterScreen
+from View.dashboard_view import DashboardView
+from View.attendance_view import AttendanceView
+from View.enrollment_view import EnrollmentView
+from View.register_view import RegisterView
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -32,10 +32,10 @@ class App(ctk.CTk):
         self._content.grid_rowconfigure(0, weight=1)
 
         self._screens = {
-            "dashboard": DashboardScreen(self._content, on_go_register=lambda: self._show_screen("register")),
-            "attendance": AttendanceScreen(self._content),
-            "enrollment": EnrollmentScreen(self._content),
-            "register": RegisterScreen(self._content),
+            "dashboard": DashboardView(self._content, on_go_register=lambda: self._show_screen("register")),
+            "attendance": AttendanceView(self._content),
+            "enrollment": EnrollmentView(self._content),
+            "register": RegisterView(self._content),
         }
         self._show_screen("dashboard")
 

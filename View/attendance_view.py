@@ -3,12 +3,12 @@ import customtkinter as ctk
 from PIL import Image
 import cv2
 
-from services.employee_service import get_all_employees
-from services.recognition_service import recognize_face_from_frame, record_attendance
-from services.report_service import get_recent_attendance
+from Controller.attendance_controller import AttendanceController
+from Controller.face_controller import FaceController
+from Controller.employee_controller import EmployeeController
 
 
-class AttendanceScreen(ctk.CTkFrame):
+class AttendanceView(ctk.CTkFrame):
     PREVIEW_W, PREVIEW_H = 480, 360
 
     def __init__(self, parent):
@@ -21,7 +21,6 @@ class AttendanceScreen(ctk.CTkFrame):
         self._known_encodings = []
         self._known_employee_ids = []
         self._marked_today = set()
-        self._current_name = ""
         self._current_frame = None
         self._build_ui()
         self._load_known_faces()
@@ -88,25 +87,20 @@ class AttendanceScreen(ctk.CTkFrame):
         self._attendance_scroll.grid_columnconfigure(0, weight=1)
 
     def _load_known_faces(self):
-        from services.recognition_service import get_known_faces
-
-        encodings, employee_ids = get_known_faces()
-        self._known_encodings = encodings
-        self._known_employee_ids = employee_ids
+        self._known_encodings, self._known_employee_ids = FaceController.load_known_faces()
 
     def _refresh_attendance_list(self):
         for widget in self._attendance_scroll.winfo_children():
             widget.destroy()
 
-        rows = get_recent_attendance(limit=8)
+        rows = AttendanceController.get_recent_attendance(limit=8)
         if not rows:
             ctk.CTkLabel(self._attendance_scroll, text="No attendance records yet.", text_color="gray").grid(pady=10)
             return
 
         for row in rows:
-            name = f"{row.get('first_name', '')} {row.get('last_name', '')}".strip()
-            line = f"{name} • {row.get('attendance_date')} • {row.get('status', 'present')}"
-            ctk.CTkLabel(self._attendance_scroll, text=line, anchor="w").grid(sticky="ew", pady=3)
+            name = f"{row.first_name} {row.last_name}".strip()
+            ctk.CTkLabel(self._attendance_scroll, text=f"{name} • {row.attendance_date} • {row.status}", anchor="w").grid(sticky="ew", pady=3)
 
     def _set_status(self, message, error=False):
         color = "#E24B4A" if error else "#1D9E75"
@@ -144,14 +138,13 @@ class AttendanceScreen(ctk.CTkFrame):
                     self._current_frame = frame.copy()
 
                 if len(self._known_encodings) and len(self._known_employee_ids):
-                    employee_id, confidence, _ = recognize_face_from_frame(frame, self._known_encodings, self._known_employee_ids)
+                    employee_id, confidence, _ = FaceController.recognize_face_from_frame(frame, self._known_encodings, self._known_employee_ids)
                     if employee_id is not None and employee_id not in self._marked_today:
-                        emp = self._lookup_employee(employee_id)
+                        emp = EmployeeController.get_employee(employee_id)
                         if emp:
-                            name = f"{emp['first_name']} {emp['last_name']}"
-                            self._current_name = name
+                            name = emp.full_name
                             self._recognition_label.configure(text=f"Recognized: {name}")
-                            record_attendance(employee_id)
+                            AttendanceController.record_attendance(employee_id)
                             self._marked_today.add(employee_id)
                             self._refresh_attendance_list()
                             self._set_status(f"Attendance recorded for {name}.")
@@ -159,13 +152,6 @@ class AttendanceScreen(ctk.CTkFrame):
             cap.release()
             with self._lock:
                 self._current_frame = None
-
-    def _lookup_employee(self, employee_id):
-        employees = get_all_employees()
-        for employee in employees:
-            if employee["id"] == employee_id:
-                return employee
-        return None
 
     def _render_frame(self):
         if not self._running:
