@@ -12,6 +12,7 @@ from tkinter import messagebox
 
 from Controller.attendance_controller import AttendanceController
 from DAO.schedule_dao import ScheduleDAO
+from events import AppEvents
 
 # ─── Design Tokens ───────────────────────────────────────────────────────────
 GREEN      = "#22C98E"
@@ -45,7 +46,8 @@ class ScheduleView(ctk.CTkFrame):
         self._selected_id = None
         self._schedules   = []
         self._build_ui()
-        self._load()
+        self.after(100, self._load)
+        AppEvents.on("schedule_changed", self._load)
 
     # ── Build ────────────────────────────────────────────────────────────────
     def _build_ui(self):
@@ -351,6 +353,7 @@ class ScheduleView(ctk.CTkFrame):
             self._set_status("✅  Schedule saved.")
             self._clear()
             self._load()
+            AppEvents.emit("schedule_changed")
         else:
             self._set_status("Save failed.", error=True)
 
@@ -363,6 +366,7 @@ class ScheduleView(ctk.CTkFrame):
                 self._set_status("Schedule deleted.")
                 self._clear()
                 self._load()
+                AppEvents.emit("schedule_changed")
             else:
                 self._set_status("Delete failed.", error=True)
 
@@ -372,6 +376,7 @@ class ScheduleView(ctk.CTkFrame):
         if ScheduleDAO.set_active(self._selected_id):
             self._set_status("✅  Schedule set as active.")
             self._load()
+            AppEvents.emit("schedule_changed")
             # Re-select to update button state
             for s in self._schedules:
                 if s.id == self._selected_id:

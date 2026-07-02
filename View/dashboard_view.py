@@ -1,5 +1,7 @@
 import customtkinter as ctk
 from Controller.attendance_controller import AttendanceController
+from events import AppEvents
+import datetime as dt
 
 # ─── Design Tokens ───────────────────────────────────────────────────────────
 ACCENT      = "#4F8EF7"
@@ -12,9 +14,10 @@ BG_ROW_ALT  = ("gray88", "#252839")
 FG_MUTED    = ("gray45", "gray65")
 
 STATUS_COLORS = {
-    "present": ("#d4f5e9", "#0a3d2b", "#22C98E"),
-    "late":    ("#fff3cd", "#3d2e00", "#F5A623"),
-    "absent":  ("#fde8e8", "#3d0a0a", "#E24B4A"),
+    "present":  ("#d4f5e9", "#0a3d2b", "#22C98E"),
+    "late":     ("#fff3cd", "#3d2e00", "#F5A623"),
+    "half-day": ("#fde8e8", "#3d0a0a", "#E24B4A"),
+    "absent":   ("#fde8e8", "#3d0a0a", "#E24B4A"),
 }
 
 CARD_CONFIGS = [
@@ -24,14 +27,30 @@ CARD_CONFIGS = [
     ("📋", "Total Records",    "#A78BFA", "#2a1a5e"),
 ]
 
+# All columns: (header, weight, header_anchor, data_anchor)
 TABLE_COLS = [
-    ("Date",       110, "w"),
-    ("Employee",   150, "w"),
-    ("Department", 130, "w"),
-    ("Time In",    80,  "center"),
-    ("Time Out",   80,  "center"),
-    ("Status",     80,  "center"),
+    ("Date",       1, "w", "w"),
+    ("Employee",   2, "w", "w"),
+    ("Department", 2, "w", "w"),
+    ("Time In",    1, "w", "w"),
+    ("Time Out",   1, "w", "w"),
+    ("Status",     1, "w", "center"),
 ]
+
+
+def _fmt_time(val) -> str:
+    """Safely format a time, timedelta, or string as HH:MM."""
+    if val is None:
+        return "—"
+    if isinstance(val, dt.timedelta):
+        total = int(val.total_seconds())
+        h, m  = divmod(total // 60, 60)
+        return f"{h:02d}:{m:02d}"
+    if isinstance(val, dt.time):
+        return val.strftime("%H:%M")
+    s = str(val)
+    # strip trailing colon artifacts from slicing
+    return s[:5].rstrip(":")  if len(s) >= 5 else s
 
 
 class DashboardView(ctk.CTkFrame):
@@ -39,7 +58,9 @@ class DashboardView(ctk.CTkFrame):
         super().__init__(parent, fg_color="transparent")
         self._on_go_register = on_go_register
         self._build_ui()
-        self._refresh()
+        self.after(100, self._refresh)
+        AppEvents.on("attendance_changed", self._refresh)
+        AppEvents.on("employee_changed",   self._refresh)
 
     # ── Build ────────────────────────────────────────────────────────────────
     def _build_ui(self):
@@ -150,23 +171,32 @@ class DashboardView(ctk.CTkFrame):
             text_color=FG_MUTED,
         ).grid(row=0, column=1, sticky="e")
 
-        # Table column headers
+        # Table column headers — weights MUST match TABLE_COLS exactly
         col_hdr = ctk.CTkFrame(table_card, fg_color=("gray85", "#252839"), corner_radius=0)
         col_hdr.grid(row=1, column=0, sticky="ew", padx=0)
-        for i, (label, width, anchor) in enumerate(TABLE_COLS):
-            col_hdr.grid_columnconfigure(i, weight=1)
+        for i, (_, weight, _, _) in enumerate(TABLE_COLS):
+            col_hdr.grid_columnconfigure(i, weight=weight)
+
+        for i, (label, weight, h_anchor, _) in enumerate(TABLE_COLS):
             ctk.CTkLabel(
-                col_hdr, text=label,
+                col_hdr,
+                text=label,
                 font=ctk.CTkFont(size=12, weight="bold"),
                 text_color=FG_MUTED,
-                anchor=anchor, width=width,
-            ).grid(row=0, column=i, sticky="ew", padx=(16 if i == 0 else 8, 8), pady=8)
+                anchor=h_anchor,
+            ).grid(
+                row=0,
+                column=i,
+                sticky="ew",
+                padx=5,
+                pady=5,
+            )
 
         # Scrollable rows
         self._table_scroll = ctk.CTkScrollableFrame(table_card, fg_color="transparent")
         self._table_scroll.grid(row=2, column=0, sticky="nsew", padx=0, pady=(0, 8))
-        for i in range(len(TABLE_COLS)):
-            self._table_scroll.grid_columnconfigure(i, weight=1)
+        for i, (_, weight, _, _) in enumerate(TABLE_COLS):
+            self._table_scroll.grid_columnconfigure(i, weight=weight)
 
     # ── Data ─────────────────────────────────────────────────────────────────
     def _refresh(self):
@@ -195,44 +225,39 @@ class DashboardView(ctk.CTkFrame):
             ).grid(row=0, column=0, columnspan=len(TABLE_COLS), pady=24)
             return
 
+        # 👇 DITO papalit — ito na yung buong loop na binigay ko
         for r_idx, row in enumerate(rows):
-            bg = ("gray90", "#252839") if r_idx % 2 == 0 else ("gray92", "#1E2130")
+            bg       = ("gray90", "#252839") if r_idx % 2 == 0 else ("gray92", "#1E2130")  # ✅ fixed
             name     = f"{row.first_name} {row.last_name}".strip()
             dept     = row.department_name or "—"
-            time_in  = str(row.time_in)[:5]  if row.time_in  else "—"
-            time_out = str(row.time_out)[:5] if row.time_out else "—"
+            time_in  = _fmt_time(row.time_in)
+            time_out = _fmt_time(row.time_out)
             status   = row.status or "—"
-
             s_light, s_dark, s_fg = STATUS_COLORS.get(status.lower(), ("#eee", "#333", "#888"))
 
-            row_frame = ctk.CTkFrame(
-                self._table_scroll,
-                fg_color=bg, corner_radius=0,
-            )
-            row_frame.grid(row=r_idx, column=0, columnspan=len(TABLE_COLS),
-                           sticky="ew", padx=0, pady=0)
-            row_frame.grid_columnconfigure(list(range(len(TABLE_COLS))), weight=1)
+            cells = [str(row.attendance_date), name, dept, time_in, time_out]
+            for c_idx, (text, (_, _, _, d_anchor)) in enumerate(zip(cells, TABLE_COLS)):
+                ctk.CTkLabel(
+                    self._table_scroll, text=text,
+                    font=ctk.CTkFont(size=12),
+                    anchor=d_anchor,
+                    fg_color=bg,
+                    corner_radius=0,
+                ).grid(row=r_idx, column=c_idx, sticky="nsew", padx=0, pady=5)
 
-            # Columns 0-4: text cells; column 5: status badge
-            cells = [str(row.attendance_date), name, dept, time_in, time_out, ""]
-            for c_idx, (text, (_, width, anchor)) in enumerate(zip(cells, TABLE_COLS)):
-                if c_idx == 5:
-                    badge_frame = ctk.CTkFrame(
-                        row_frame, fg_color=(s_light, s_dark), corner_radius=6,
-                    )
-                    badge_frame.grid(row=0, column=c_idx, padx=8, pady=6, sticky="")
-                    ctk.CTkLabel(
-                        badge_frame, text=status.capitalize(),
-                        font=ctk.CTkFont(size=11, weight="bold"),
-                        text_color=s_fg,
-                    ).grid(padx=8, pady=3)
-                else:
-                    ctk.CTkLabel(
-                        row_frame, text=text,
-                        font=ctk.CTkFont(size=12),
-                        anchor=anchor,
-                    ).grid(row=0, column=c_idx, sticky="ew",
-                           padx=(16 if c_idx == 0 else 8, 8), pady=10)
+            badge_wrapper = ctk.CTkFrame(self._table_scroll, fg_color=bg, corner_radius=0)
+            badge_wrapper.grid(row=r_idx, column=5, sticky="nsew", padx=0, pady=5)
+            badge_wrapper.grid_columnconfigure(0, weight=1)
+            badge_wrapper.grid_rowconfigure(0, weight=1)
+            badge_frame = ctk.CTkFrame(
+                badge_wrapper, fg_color=(s_light, s_dark), corner_radius=0,
+            )
+            badge_frame.grid(row=0, column=0)
+            ctk.CTkLabel(
+                badge_frame, text=status.capitalize(),
+                font=ctk.CTkFont(size=11, weight="bold"),
+                text_color=s_fg,
+            ).grid(padx=0, pady=5)
 
     def _handle_register(self):
         if callable(self._on_go_register):

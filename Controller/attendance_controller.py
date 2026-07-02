@@ -4,6 +4,7 @@ from typing import List, Optional, Literal
 from DAO.attendance_dao import AttendanceDAO
 from DAO.schedule_dao import ScheduleDAO
 from Model.entities import AttendanceRecord, DashboardSummary, AttendanceReportRow, WorkSchedule
+from events import AppEvents
 
 
 # Fallback schedule used when no DB schedule is found
@@ -95,18 +96,20 @@ class AttendanceController:
             check_in_time = dt.datetime.now().strftime("%H:%M:%S")
         if status is None:
             status = AttendanceController.determine_status(check_in_time)
-        return AttendanceDAO.save_attendance(employee_id, today, check_in_time, status)
+        ok = AttendanceDAO.save_attendance(employee_id, today, check_in_time, status)
+        if ok:
+            AppEvents.emit("attendance_changed")
+        return ok
 
     @staticmethod
     def record_time_out(employee_id: int, time_out: Optional[str] = None) -> bool:
-        """
-        Record time-out for today's attendance row.
-        Returns False if no time-in row exists or already timed out.
-        """
         today = dt.date.today().isoformat()
         if time_out is None:
             time_out = dt.datetime.now().strftime("%H:%M:%S")
-        return AttendanceDAO.record_time_out(employee_id, today, time_out)
+        ok = AttendanceDAO.record_time_out(employee_id, today, time_out)
+        if ok:
+            AppEvents.emit("attendance_changed")
+        return ok
 
     @staticmethod
     def has_timed_in(employee_id: int) -> bool:

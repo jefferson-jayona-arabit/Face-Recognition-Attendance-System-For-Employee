@@ -2,6 +2,7 @@ import customtkinter as ctk
 from tkinter import messagebox
 
 from Controller.employee_controller import EmployeeController
+from events import AppEvents
 
 # ─── Design Tokens ───────────────────────────────────────────────────────────
 GREEN      = "#22C98E"
@@ -14,12 +15,12 @@ BG_CARD    = ("gray92", "#1E2130")
 FG_MUTED   = ("gray45", "gray65")
 
 TABLE_COLS = [
-    ("Emp. No.",   90,  "w"),
-    ("Name",       160, "w"),
-    ("Department", 120, "w"),
-    ("Position",   110, "w"),
-    ("Status",     80,  "center"),
-    ("Face",       70,  "center"),
+    ("Emp. No.",   1, "w",      "w"),
+    ("Name",       2, "w",      "w"),
+    ("Department", 2, "w",      "w"),
+    ("Position",   2, "w",      "w"),
+    ("Status",     1, "center", "center"),
+    ("Face",       1, "center", "center"),
 ]
 
 
@@ -30,13 +31,21 @@ class RegisterView(ctk.CTkFrame):
         self._dept_map             = {}
         self._all_employees        = []
         self._build_ui()
+        self.after(100, self._deferred_init)
+        AppEvents.on("employee_changed", self._on_employee_changed)
+
+    def _deferred_init(self):
+        self._load_departments()
+        self._load_employees()
+
+    def _on_employee_changed(self):
         self._load_departments()
         self._load_employees()
 
     # ── Build ────────────────────────────────────────────────────────────────
     def _build_ui(self):
-        self.grid_columnconfigure(0, weight=2)
-        self.grid_columnconfigure(1, weight=3)
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_columnconfigure(1, weight=2)
         self.grid_rowconfigure(0, weight=1)
 
         # ── Left: registration form ──────────────────────────────────────────
@@ -120,7 +129,7 @@ class RegisterView(ctk.CTkFrame):
         self._dept_var = ctk.StringVar(value="Select department")
         self._dept_dropdown = ctk.CTkOptionMenu(
             form_card, variable=self._dept_var,
-            values=["Loading…"], height=38, corner_radius=8,
+            values=["Loading…"], height=38,
         )
         self._dept_dropdown.grid(row=12, column=0, sticky="ew", padx=20, pady=(0, 10))
 
@@ -132,7 +141,7 @@ class RegisterView(ctk.CTkFrame):
         self._status_var = ctk.StringVar(value="active")
         ctk.CTkOptionMenu(
             form_card, variable=self._status_var,
-            values=["active", "inactive"], height=38, corner_radius=8,
+            values=["active", "inactive"], height=38,
         ).grid(row=14, column=0, sticky="ew", padx=20, pady=(0, 16))
 
         # Divider
@@ -220,24 +229,24 @@ class RegisterView(ctk.CTkFrame):
             command=self._load_employees,
         ).grid(row=0, column=1)
 
-        # Column headers
+        # Column headers — weights from TABLE_COLS
         col_hdr = ctk.CTkFrame(list_card, fg_color=("gray85", "#252839"), corner_radius=0)
         col_hdr.grid(row=1, column=0, sticky="ew")
-        for i, (label, width, anchor) in enumerate(TABLE_COLS):
-            col_hdr.grid_columnconfigure(i, weight=1)
+        for i, (label, weight, h_anchor, _) in enumerate(TABLE_COLS):
+            col_hdr.grid_columnconfigure(i, weight=weight)
             ctk.CTkLabel(
                 col_hdr, text=label,
                 font=ctk.CTkFont(size=11, weight="bold"),
                 text_color=FG_MUTED,
-                anchor=anchor, width=width,
+                anchor=h_anchor,
             ).grid(row=0, column=i, sticky="ew",
                    padx=(14 if i == 0 else 6, 6), pady=8)
 
-        # Scrollable rows
+        # Scrollable rows — same weights as header
         self._scroll = ctk.CTkScrollableFrame(list_card, fg_color="transparent")
         self._scroll.grid(row=2, column=0, sticky="nsew", padx=0, pady=(0, 8))
-        for i in range(len(TABLE_COLS)):
-            self._scroll.grid_columnconfigure(i, weight=1)
+        for i, (_, weight, _, _) in enumerate(TABLE_COLS):
+            self._scroll.grid_columnconfigure(i, weight=weight)
 
         # Footer count
         self._emp_count_label = ctk.CTkLabel(
@@ -286,7 +295,9 @@ class RegisterView(ctk.CTkFrame):
             )
             row_frame.grid(row=r_idx, column=0, columnspan=len(TABLE_COLS),
                            sticky="ew", padx=0, pady=1)
-            row_frame.grid_columnconfigure(list(range(len(TABLE_COLS))), weight=1)
+            # Row column weights MUST match header weights exactly.
+            for i, (_, weight, _, _) in enumerate(TABLE_COLS):
+                row_frame.grid_columnconfigure(i, weight=weight)
 
             # Status badge
             s_light  = ("#d4f5e9", "#0a3d2b") if emp.status == "active" else ("gray82", "gray35")
@@ -314,27 +325,37 @@ class RegisterView(ctk.CTkFrame):
                          padx=(14 if c_idx == 0 else 6, 6), pady=9)
                 lbl.bind("<Button-1>", lambda e, em=emp: self._select_employee(em))
 
-            # Status badge cell
-            sbf = ctk.CTkFrame(row_frame, fg_color=s_light, corner_radius=5)
-            sbf.grid(row=0, column=4, padx=6, pady=6)
+            # Status badge cell — wrapper fills column, badge centered inside
+            status_wrapper = ctk.CTkFrame(row_frame, fg_color="transparent", corner_radius=0)
+            status_wrapper.grid(row=0, column=4, sticky="nsew", padx=4, pady=4)
+            status_wrapper.grid_columnconfigure(0, weight=1)
+            status_wrapper.grid_rowconfigure(0, weight=1)
+            sbf = ctk.CTkFrame(status_wrapper, fg_color=s_light, corner_radius=5)
+            sbf.grid(row=0, column=0)
             slbl = ctk.CTkLabel(
                 sbf, text=emp.status.capitalize(),
                 font=ctk.CTkFont(size=10, weight="bold"),
                 text_color=s_fg,
             )
             slbl.grid(padx=7, pady=3)
+            status_wrapper.bind("<Button-1>", lambda e, em=emp: self._select_employee(em))
             sbf.bind("<Button-1>", lambda e, em=emp: self._select_employee(em))
             slbl.bind("<Button-1>", lambda e, em=emp: self._select_employee(em))
 
-            # Face badge cell
-            fbf = ctk.CTkFrame(row_frame, fg_color=f_light, corner_radius=5)
-            fbf.grid(row=0, column=5, padx=6, pady=6)
+            # Face badge cell — wrapper fills column, badge centered inside
+            face_wrapper = ctk.CTkFrame(row_frame, fg_color="transparent", corner_radius=0)
+            face_wrapper.grid(row=0, column=5, sticky="nsew", padx=4, pady=4)
+            face_wrapper.grid_columnconfigure(0, weight=1)
+            face_wrapper.grid_rowconfigure(0, weight=1)
+            fbf = ctk.CTkFrame(face_wrapper, fg_color=f_light, corner_radius=5)
+            fbf.grid(row=0, column=0)
             flbl = ctk.CTkLabel(
                 fbf, text=f_text,
                 font=ctk.CTkFont(size=11, weight="bold"),
                 text_color=f_fg,
             )
             flbl.grid(padx=7, pady=3)
+            face_wrapper.bind("<Button-1>", lambda e, em=emp: self._select_employee(em))
             fbf.bind("<Button-1>", lambda e, em=emp: self._select_employee(em))
             flbl.bind("<Button-1>", lambda e, em=emp: self._select_employee(em))
             row_frame.bind("<Button-1>", lambda e, em=emp: self._select_employee(em))

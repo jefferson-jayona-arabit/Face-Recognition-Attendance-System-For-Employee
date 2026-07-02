@@ -4,6 +4,7 @@ import customtkinter as ctk
 
 from Controller.attendance_controller import AttendanceController
 from Controller.employee_controller import EmployeeController
+from events import AppEvents
 
 # ─── Design Tokens ───────────────────────────────────────────────────────────
 GREEN      = "#22C98E"
@@ -21,31 +22,55 @@ STATUS_COLORS = {
     "absent":   ("#fde8e8", "#3d0a0a", "#E24B4A"),
 }
 
+# (header, weight, header_anchor, data_anchor)
 TABLE_COLS = [
-    ("Date",       110, "w"),
-    ("Employee",   150, "w"),
-    ("Dept",       120, "w"),
-    ("Time In",     80, "center"),
-    ("Time Out",    80, "center"),
-    ("Status",      80, "center"),
+    ("Date",     1, "w",      "w"),
+    ("Employee", 1, "w",      "w"),
+    ("Dept",     1, "w",      "w"),
+    ("Time In",  1, "w", "w"),
+    ("Time Out", 1, "w", "w"),
+    ("Status",   1, "w", "w"),
 ]
 
 QUICK_RANGES = [
-    ("Today",       "today"),
-    ("Yesterday",   "yesterday"),
-    ("This Week",   "week"),
-    ("This Month",  "month"),
-    ("This Year",   "year"),
-    ("All",         "all"),
+    ("Today",      "today"),
+    ("Yesterday",  "yesterday"),
+    ("This Week",  "week"),
+    ("This Month", "month"),
+    ("This Year",  "year"),
+    ("All",        "all"),
 ]
+
+def _fmt_time(val) -> str:
+    """Safely format a time or timedelta as HH:MM."""
+    if val is None:
+        return "—"
+    if isinstance(val, dt.timedelta):
+        total = int(val.total_seconds())
+        h, m  = divmod(total // 60, 60)
+        return f"{h:02d}:{m:02d}"
+    if isinstance(val, dt.time):
+        return val.strftime("%H:%M")
+    s = str(val)
+    return s[:5].rstrip(":") if len(s) >= 5 else s
 
 
 class AttendanceView(ctk.CTkFrame):
     def __init__(self, parent):
         super().__init__(parent, fg_color="transparent")
-        self._dept_map   = {}   # name → id
+        self._dept_map     = {}
         self._active_range = "today"
         self._build_ui()
+        # Defer DB calls and rendering until after the widget is drawn
+        self.after(100, self._deferred_init)
+        AppEvents.on("attendance_changed", self._apply_filters)
+        AppEvents.on("employee_changed",   self._reload_and_apply)
+
+    def _deferred_init(self):
+        self._load_departments()
+        self._apply_filters()
+
+    def _reload_and_apply(self):
         self._load_departments()
         self._apply_filters()
 
@@ -75,8 +100,8 @@ class AttendanceView(ctk.CTkFrame):
         # ── Main body: filter sidebar + table ────────────────────────────────
         body = ctk.CTkFrame(self, fg_color="transparent")
         body.grid(row=1, column=0, sticky="nsew")
-        body.grid_columnconfigure(0, weight=0)
-        body.grid_columnconfigure(1, weight=1)
+        body.grid_columnconfigure(0, weight=1, minsize=220)
+        body.grid_columnconfigure(1, weight=4)
         body.grid_rowconfigure(0, weight=1)
 
         self._build_filter_panel(body)
@@ -84,25 +109,30 @@ class AttendanceView(ctk.CTkFrame):
 
     # ── Filter sidebar ───────────────────────────────────────────────────────
     def _build_filter_panel(self, parent):
-        sidebar = ctk.CTkFrame(
+        # Outer card holds the title and the scrollable content
+        outer = ctk.CTkFrame(
             parent, corner_radius=14, fg_color=BG_CARD,
             border_width=1, border_color=("gray80", "gray25"),
-            width=240,
         )
-        sidebar.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
-        sidebar.grid_propagate(False)
-        sidebar.grid_columnconfigure(0, weight=1)
+        outer.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+        outer.grid_columnconfigure(0, weight=1)
+        outer.grid_rowconfigure(1, weight=1)
 
         ctk.CTkLabel(
-            sidebar, text="🔍  Filters",
+            outer, text="🔍  Filters",
             font=ctk.CTkFont(size=14, weight="bold"),
-        ).grid(row=0, column=0, sticky="w", padx=16, pady=(16, 10))
+        ).grid(row=0, column=0, sticky="w", padx=16, pady=(16, 6))
+
+        # All filter widgets go inside a scrollable frame
+        sidebar = ctk.CTkScrollableFrame(outer, fg_color="transparent")
+        sidebar.grid(row=1, column=0, sticky="nsew", padx=0, pady=(0, 0))
+        sidebar.grid_columnconfigure(0, weight=1)
 
         # ── Quick range buttons ──────────────────────────────────────────────
         ctk.CTkLabel(
             sidebar, text="Quick Range",
             font=ctk.CTkFont(size=11, weight="bold"), text_color=FG_MUTED,
-        ).grid(row=1, column=0, sticky="w", padx=16, pady=(0, 4))
+        ).grid(row=0, column=0, sticky="w", padx=16, pady=(10, 4))
 
         self._range_btns = {}
         for i, (label, key) in enumerate(QUICK_RANGES):
@@ -114,124 +144,153 @@ class AttendanceView(ctk.CTkFrame):
                 font=ctk.CTkFont(size=12),
                 command=lambda k=key: self._set_quick_range(k),
             )
-            btn.grid(row=2 + i, column=0, sticky="ew", padx=12, pady=2)
+            btn.grid(row=1 + i, column=0, sticky="ew", padx=12, pady=2)
             self._range_btns[key] = btn
 
         ctk.CTkFrame(sidebar, height=1, fg_color=("gray80", "gray30")).grid(
-            row=8, column=0, sticky="ew", padx=16, pady=(10, 10)
+            row=7, column=0, sticky="ew", padx=16, pady=(10, 10)
         )
 
         # ── Custom date range ────────────────────────────────────────────────
         ctk.CTkLabel(
             sidebar, text="Date From",
             font=ctk.CTkFont(size=11, weight="bold"), text_color=FG_MUTED,
-        ).grid(row=9, column=0, sticky="w", padx=16, pady=(0, 3))
+        ).grid(row=8, column=0, sticky="w", padx=16, pady=(0, 3))
         self._date_from = ctk.CTkEntry(
             sidebar, placeholder_text="YYYY-MM-DD",
             height=32, corner_radius=6,
         )
-        self._date_from.grid(row=10, column=0, sticky="ew", padx=12, pady=(0, 8))
+        self._date_from.grid(row=9, column=0, sticky="ew", padx=12, pady=(0, 8))
 
         ctk.CTkLabel(
             sidebar, text="Date To",
             font=ctk.CTkFont(size=11, weight="bold"), text_color=FG_MUTED,
-        ).grid(row=11, column=0, sticky="w", padx=16, pady=(0, 3))
+        ).grid(row=10, column=0, sticky="w", padx=16, pady=(0, 3))
         self._date_to = ctk.CTkEntry(
             sidebar, placeholder_text="YYYY-MM-DD",
             height=32, corner_radius=6,
         )
-        self._date_to.grid(row=12, column=0, sticky="ew", padx=12, pady=(0, 8))
+        self._date_to.grid(row=11, column=0, sticky="ew", padx=12, pady=(0, 8))
 
         ctk.CTkFrame(sidebar, height=1, fg_color=("gray80", "gray30")).grid(
-            row=13, column=0, sticky="ew", padx=16, pady=(4, 10)
+            row=12, column=0, sticky="ew", padx=16, pady=(4, 10)
         )
 
         # ── Name / Employee No search ────────────────────────────────────────
         ctk.CTkLabel(
             sidebar, text="Name / Emp. No.",
             font=ctk.CTkFont(size=11, weight="bold"), text_color=FG_MUTED,
-        ).grid(row=14, column=0, sticky="w", padx=16, pady=(0, 3))
+        ).grid(row=13, column=0, sticky="w", padx=16, pady=(0, 3))
         self._name_search = ctk.CTkEntry(
             sidebar, placeholder_text="Search…",
             height=32, corner_radius=6,
         )
-        self._name_search.grid(row=15, column=0, sticky="ew", padx=12, pady=(0, 8))
+        self._name_search.grid(row=14, column=0, sticky="ew", padx=12, pady=(0, 8))
 
         # ── Department dropdown ──────────────────────────────────────────────
         ctk.CTkLabel(
             sidebar, text="Department",
             font=ctk.CTkFont(size=11, weight="bold"), text_color=FG_MUTED,
-        ).grid(row=16, column=0, sticky="w", padx=16, pady=(0, 3))
+        ).grid(row=15, column=0, sticky="w", padx=16, pady=(0, 3))
         self._dept_var = ctk.StringVar(value="All Departments")
         self._dept_menu = ctk.CTkOptionMenu(
             sidebar, variable=self._dept_var,
             values=["All Departments"],
-            height=32, corner_radius=6,
+            height=32,
             command=lambda _: None,
         )
-        self._dept_menu.grid(row=17, column=0, sticky="ew", padx=12, pady=(0, 8))
+        self._dept_menu.grid(row=16, column=0, sticky="ew", padx=12, pady=(0, 8))
 
         # ── Status filter ────────────────────────────────────────────────────
         ctk.CTkLabel(
             sidebar, text="Status",
             font=ctk.CTkFont(size=11, weight="bold"), text_color=FG_MUTED,
-        ).grid(row=18, column=0, sticky="w", padx=16, pady=(0, 3))
+        ).grid(row=17, column=0, sticky="w", padx=16, pady=(0, 3))
         self._status_var = ctk.StringVar(value="All")
         ctk.CTkOptionMenu(
             sidebar, variable=self._status_var,
             values=["All", "present", "late", "half-day"],
-            height=32, corner_radius=6,
+            height=32,
             command=lambda _: None,
-        ).grid(row=19, column=0, sticky="ew", padx=12, pady=(0, 10))
+        ).grid(row=18, column=0, sticky="ew", padx=12, pady=(0, 10))
 
         ctk.CTkFrame(sidebar, height=1, fg_color=("gray80", "gray30")).grid(
-            row=20, column=0, sticky="ew", padx=16, pady=(4, 10)
+            row=19, column=0, sticky="ew", padx=16, pady=(4, 10)
         )
 
         # ── Action buttons ───────────────────────────────────────────────────
         ctk.CTkButton(
-            sidebar, text="Apply Filters",
+            sidebar, text="✅  Apply Filters",
             fg_color=GREEN, hover_color=GREEN_DARK,
-            height=36, corner_radius=8,
+            height=38, corner_radius=8,
             font=ctk.CTkFont(weight="bold"),
             command=self._apply_filters,
-        ).grid(row=21, column=0, sticky="ew", padx=12, pady=(0, 6))
+        ).grid(row=20, column=0, sticky="ew", padx=12, pady=(0, 6))
 
         ctk.CTkButton(
-            sidebar, text="Clear Filters",
+            sidebar, text="✖  Clear Filters",
             fg_color="transparent", border_width=1,
             text_color=("gray20", "gray80"),
             hover_color=("gray85", "gray25"),
-            height=36, corner_radius=8,
+            height=38, corner_radius=8,
             command=self._clear_filters,
-        ).grid(row=22, column=0, sticky="ew", padx=12, pady=(0, 16))
+        ).grid(row=21, column=0, sticky="ew", padx=12, pady=(0, 16))
 
     # ── Table panel ──────────────────────────────────────────────────────────
     def _build_table_panel(self, parent):
         table_card = ctk.CTkFrame(
-            parent, corner_radius=14, fg_color=BG_CARD,
-            border_width=1, border_color=("gray80", "gray25"),
+            parent,
+            corner_radius=14,
+            fg_color=BG_CARD,
+            border_width=1,
+            border_color=("gray80", "gray25"),
         )
         table_card.grid(row=0, column=1, sticky="nsew")
         table_card.grid_columnconfigure(0, weight=1)
         table_card.grid_rowconfigure(1, weight=1)
 
-        # Column header row
-        col_hdr = ctk.CTkFrame(table_card, fg_color=("gray85", "#252839"), corner_radius=0)
+        # Header
+        col_hdr = ctk.CTkFrame(
+            table_card,
+            fg_color=("gray85", "#252839"),
+            corner_radius=0
+        )
         col_hdr.grid(row=0, column=0, sticky="ew")
-        for i, (label, width, anchor) in enumerate(TABLE_COLS):
-            col_hdr.grid_columnconfigure(i, weight=1)
-            ctk.CTkLabel(
-                col_hdr, text=label,
-                font=ctk.CTkFont(size=12, weight="bold"),
-                text_color=FG_MUTED, anchor=anchor, width=width,
-            ).grid(row=0, column=i, sticky="ew",
-                   padx=(14 if i == 0 else 8, 8), pady=10)
 
-        self._table_scroll = ctk.CTkScrollableFrame(table_card, fg_color="transparent")
-        self._table_scroll.grid(row=1, column=0, sticky="nsew", padx=0, pady=(0, 8))
-        for i in range(len(TABLE_COLS)):
-            self._table_scroll.grid_columnconfigure(i, weight=1)
+        # Header column weights — must match row frame weights exactly
+        for i, (_, weight, _, _) in enumerate(TABLE_COLS):
+            col_hdr.grid_columnconfigure(i, weight=weight)
+
+        for i, (label, _, h_anchor, _) in enumerate(TABLE_COLS):
+            ctk.CTkLabel(
+                col_hdr,
+                text=label,
+                font=ctk.CTkFont(size=12, weight="bold"),
+                text_color=FG_MUTED,
+                anchor=h_anchor,
+            ).grid(
+                row=0,
+                column=i,
+                sticky="ew",
+                padx=10,
+                pady=10,
+            )
+
+        self._table_scroll = ctk.CTkScrollableFrame(
+            table_card,
+            fg_color="transparent"
+        )
+        self._table_scroll.grid(
+            row=1,
+            column=0,
+            sticky="nsew",
+            padx=0,
+            pady=(0, 8),
+        )
+        # Apply the same weights to the scroll container's columns so rows
+        # placed inside it inherit the same proportions as the header.
+        for i, (_, weight, _, _) in enumerate(TABLE_COLS):
+            self._table_scroll.grid_columnconfigure(i, weight=weight)
 
     # ═══════════════════════════════════════════════════════════════════════
     # DATA HELPERS
@@ -342,31 +401,51 @@ class AttendanceView(ctk.CTkFrame):
             bg       = ("gray90", "#252839") if r_idx % 2 == 0 else BG_CARD
             name     = f"{row.first_name} {row.last_name}".strip()
             dept     = row.department_name or "—"
-            time_in  = str(row.time_in)[:5]  if row.time_in  else "—"
-            time_out = str(row.time_out)[:5] if row.time_out else "—"
+            time_in  = _fmt_time(row.time_in)
+            time_out = _fmt_time(row.time_out)
             status   = row.status or "—"
             s_light, s_dark, s_fg = STATUS_COLORS.get(
                 status.lower(), ("#eee", "#333", "#888")
             )
 
-            rf = ctk.CTkFrame(self._table_scroll, fg_color=bg, corner_radius=0)
-            rf.grid(row=r_idx, column=0, columnspan=len(TABLE_COLS),
-                    sticky="ew", padx=0, pady=0)
-            rf.grid_columnconfigure(list(range(len(TABLE_COLS))), weight=1)
+            rf = ctk.CTkFrame(
+                self._table_scroll,
+                fg_color=bg,
+                corner_radius=0,
+            )
 
-            cells = [str(row.attendance_date), name, dept, time_in, time_out, ""]
-            for c_idx, (text, (_, width, anchor)) in enumerate(zip(cells, TABLE_COLS)):
-                if c_idx == 5:
-                    bf = ctk.CTkFrame(rf, fg_color=(s_light, s_dark), corner_radius=6)
-                    bf.grid(row=0, column=c_idx, padx=8, pady=6)
-                    ctk.CTkLabel(
-                        bf, text=status.capitalize(),
-                        font=ctk.CTkFont(size=11, weight="bold"),
-                        text_color=s_fg,
-                    ).grid(padx=8, pady=3)
-                else:
-                    ctk.CTkLabel(
-                        rf, text=text,
-                        font=ctk.CTkFont(size=12), anchor=anchor,
-                    ).grid(row=0, column=c_idx, sticky="ew",
-                           padx=(14 if c_idx == 0 else 8, 8), pady=9)
+            # Row spans all data columns; sticky="ew" fills the scroll width.
+            rf.grid(
+                row=r_idx,
+                column=0,
+                columnspan=len(TABLE_COLS),
+                sticky="ew",
+                padx=0,
+                pady=0,
+            )
+
+            # Row column weights MUST match header column weights exactly.
+            for i, (_, weight, _, _) in enumerate(TABLE_COLS):
+                rf.grid_columnconfigure(i, weight=weight)
+
+            cells = [str(row.attendance_date), name, dept, time_in, time_out]
+            for c_idx, (text, (_, _, _, d_anchor)) in enumerate(zip(cells, TABLE_COLS)):
+                ctk.CTkLabel(
+                    rf, text=text,
+                    font=ctk.CTkFont(size=12), anchor=d_anchor,
+                ).grid(row=0, column=c_idx, sticky="ew",
+                       padx=0, pady=9)
+
+            # Status badge — wrapper fills the column (sticky="nsew"), badge
+            # is centered inside it so it doesn't stretch to fill the cell.
+            badge_wrapper = ctk.CTkFrame(rf, fg_color="transparent", corner_radius=0)
+            badge_wrapper.grid(row=0, column=5, sticky="nsew", padx=0, pady=4)
+            badge_wrapper.grid_columnconfigure(0, weight=1)
+            badge_wrapper.grid_rowconfigure(0, weight=1)
+            bf = ctk.CTkFrame(badge_wrapper, fg_color=(s_light, s_dark), corner_radius=6)
+            bf.grid(row=0, column=0)
+            ctk.CTkLabel(
+                bf, text=status.capitalize(),
+                font=ctk.CTkFont(size=11, weight="bold"),
+                text_color=s_fg,
+            ).grid(padx=10, pady=3)

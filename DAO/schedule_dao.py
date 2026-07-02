@@ -1,6 +1,7 @@
 from typing import Optional
 from db.connection import get_connection
 from Model.entities import WorkSchedule
+from events import AppEvents
 
 
 class ScheduleDAO:

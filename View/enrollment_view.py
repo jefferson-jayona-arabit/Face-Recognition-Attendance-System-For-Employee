@@ -6,6 +6,7 @@ import cv2
 
 from Controller.enrollment_controller import EnrollmentController
 from Controller.employee_controller import EmployeeController
+from events import AppEvents
 
 # ─── Design Tokens ───────────────────────────────────────────────────────────
 GREEN      = "#22C98E"
@@ -36,7 +37,8 @@ class EnrollmentView(ctk.CTkFrame):
         self._face_detected     = False
         self._current_frame     = None
         self._build_ui()
-        self._load_employees()
+        self.after(100, self._load_employees)
+        AppEvents.on("employee_changed", self._load_employees)
 
     # ── Build ────────────────────────────────────────────────────────────────
     def _build_ui(self):
@@ -211,13 +213,30 @@ class EnrollmentView(ctk.CTkFrame):
 
     # ── Data ─────────────────────────────────────────────────────────────────
     def _load_employees(self):
-        self._all_employees = EmployeeController.list_employees()
-        self._render_list(self._all_employees)
-        self._emp_count_label.configure(text=f"{len(self._all_employees)} employee(s)")
+        """Fetch employee data in a background thread, render on main thread."""
+        self._emp_count_label.configure(text="Loading…")
+        threading.Thread(target=self._fetch_employees, daemon=True).start()
 
-    def _render_list(self, employees):
+    def _fetch_employees(self):
+        """Runs on background thread — fetches all data, then schedules render."""
+        employees = EmployeeController.list_employees()
+        # Pre-fetch face encoding status for all employees in bulk
+        enrollment_status = {
+            emp.id: EmployeeController.employee_has_face_encoding(emp.id)
+            for emp in employees
+        }
+        # Schedule UI update on main thread
+        self.after(0, lambda: self._render_list(employees, enrollment_status))
+
+    def _render_list(self, employees, enrollment_status: dict = None):
+        if enrollment_status is None:
+            enrollment_status = {}
+
         for w in self._scroll.winfo_children():
             w.destroy()
+
+        self._all_employees = employees
+        self._emp_count_label.configure(text=f"{len(employees)} employee(s)")
 
         if not employees:
             ctk.CTkLabel(
@@ -227,7 +246,7 @@ class EnrollmentView(ctk.CTkFrame):
             return
 
         for emp in employees:
-            enrolled   = EmployeeController.employee_has_face_encoding(emp.id)
+            enrolled   = enrollment_status.get(emp.id, False)
             badge_text = "Enrolled" if enrolled else "Not enrolled"
             badge_fg   = GREEN if enrolled else ("gray55", "gray55")
             badge_bg   = ("#d4f5e9", "#0a3d2b") if enrolled else ("gray80", "gray35")
@@ -276,7 +295,12 @@ class EnrollmentView(ctk.CTkFrame):
             e for e in self._all_employees
             if q in e.first_name.lower() or q in e.last_name.lower() or q in e.employee_no.lower()
         ]
-        self._render_list(filtered)
+        # Re-fetch enrollment status only for filtered subset (fast — already cached by DB)
+        enrollment_status = {
+            emp.id: EmployeeController.employee_has_face_encoding(emp.id)
+            for emp in filtered
+        }
+        self._render_list(filtered, enrollment_status)
 
     def _select_employee(self, emp):
         if self._running:
@@ -292,7 +316,8 @@ class EnrollmentView(ctk.CTkFrame):
         self._delete_btn.configure(state="normal" if enrolled else "disabled")
         self._reset_progress()
         self._set_status("")
-        self._render_list(self._all_employees)
+        # Refresh list to show selection highlight (use cached enrollment status)
+        self._load_employees()
 
     # ── Camera ───────────────────────────────────────────────────────────────
     def _start_camera(self):

@@ -2,6 +2,7 @@ from typing import List, Optional
 
 from DAO.employee_dao import EmployeeDAO
 from Model.entities import Department, Employee
+from events import AppEvents
 
 
 class EmployeeController:
@@ -21,12 +22,19 @@ class EmployeeController:
     def save_employee(employee_no: str, first_name: str, last_name: str, department_id: int, position: str, employee_id: Optional[int] = None, status: str = "active") -> Optional[int]:
         if employee_id:
             success = EmployeeDAO.update_employee(employee_id, employee_no, first_name, last_name, department_id, position, status)
-            return employee_id if success else None
-        return EmployeeDAO.add_employee(employee_no, first_name, last_name, department_id, position)
+            result = employee_id if success else None
+        else:
+            result = EmployeeDAO.add_employee(employee_no, first_name, last_name, department_id, position)
+        if result:
+            AppEvents.emit("employee_changed")
+        return result
 
     @staticmethod
     def delete_employee(employee_id: int) -> bool:
-        return EmployeeDAO.delete_employee(employee_id)
+        ok = EmployeeDAO.delete_employee(employee_id)
+        if ok:
+            AppEvents.emit("employee_changed")
+        return ok
 
     @staticmethod
     def employee_no_exists(employee_no: str, exclude_id: Optional[int] = None) -> bool:

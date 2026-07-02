@@ -2,6 +2,7 @@ import customtkinter as ctk
 from tkinter import messagebox
 
 from Controller.user_controller import UserController
+from events import AppEvents
 
 # ─── Design Tokens ───────────────────────────────────────────────────────────
 GREEN      = "#22C98E"
@@ -33,7 +34,8 @@ class AdminView(ctk.CTkFrame):
         self._selected_user_id = None
         self._all_users        = []
         self._build_ui()
-        self._load_users()
+        self.after(100, self._load_users)
+        AppEvents.on("user_changed", self._load_users)
 
     # ── Build ────────────────────────────────────────────────────────────────
     def _build_ui(self):
@@ -121,7 +123,7 @@ class AdminView(ctk.CTkFrame):
         ctk.CTkOptionMenu(
             form_card, variable=self._role_var,
             values=["admin", "hr", "employee"],
-            height=38, corner_radius=8,
+            height=38,
         ).grid(row=9, column=0, sticky="ew", padx=20, pady=(0, 16))
 
         ctk.CTkFrame(form_card, height=1, fg_color=("gray80", "gray30")).grid(
@@ -199,15 +201,24 @@ class AdminView(ctk.CTkFrame):
         # Column headers
         col_hdr = ctk.CTkFrame(list_card, fg_color=("gray85", "#252839"), corner_radius=0)
         col_hdr.grid(row=1, column=0, sticky="ew")
+        # Header column sizes
+        col_hdr.grid_columnconfigure(0, weight=3, minsize=180)
+        col_hdr.grid_columnconfigure(1, weight=1, minsize=120)
+        col_hdr.grid_columnconfigure(2, weight=2, minsize=150)
         for i, (label, width, anchor) in enumerate(TABLE_COLS):
-            col_hdr.grid_columnconfigure(i, weight=1)
             ctk.CTkLabel(
-                col_hdr, text=label,
+                col_hdr,
+                text=label,
                 font=ctk.CTkFont(size=11, weight="bold"),
                 text_color=FG_MUTED,
-                anchor=anchor, width=width,
-            ).grid(row=0, column=i, sticky="ew",
-                   padx=(14 if i == 0 else 8, 8), pady=8)
+                anchor=anchor,
+            ).grid(
+                row=0,
+                column=i,
+                sticky="ew",
+                padx=10,
+                pady=8,
+            )
 
         # Scrollable rows
         self._scroll = ctk.CTkScrollableFrame(list_card, fg_color="transparent")
@@ -254,7 +265,9 @@ class AdminView(ctk.CTkFrame):
             )
             row_frame.grid(row=r_idx, column=0, columnspan=len(TABLE_COLS),
                            sticky="ew", padx=0, pady=1)
-            row_frame.grid_columnconfigure(list(range(len(TABLE_COLS))), weight=1)
+            row_frame.grid_columnconfigure(0, weight=3, minsize=180)
+            row_frame.grid_columnconfigure(1, weight=1, minsize=120)
+            row_frame.grid_columnconfigure(2, weight=2, minsize=150)
 
             # Username cell
             lbl = ctk.CTkLabel(
